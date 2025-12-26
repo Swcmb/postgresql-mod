@@ -5,7 +5,7 @@
         "name": "retome attach debug",
         "request": "attach",
         "type": "cppdbg",
-        "program": "/db/uxdb/bin/psql",  
+        "program": "./db/uxdb/bin/postgres",  
         "processId": "${command:pickProcess}",
         "MIMode": "gdb",
         "miDebuggerPath": "/usr/bin/gdb"

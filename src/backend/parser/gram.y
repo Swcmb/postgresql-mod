@@ -12050,6 +12050,20 @@ DeleteStmt: opt_with_clause DELETE_P FROM relation_expr_opt_alias
 					n->whereClause = $6;
 					n->returningList = $7;
 					n->withClause = $1;
+					n->deleteAll = false;	/* 普通DELETE语句，不使用ALL */
+					$$ = (Node *) n;
+				}
+		| opt_with_clause DELETE_P ALL FROM relation_expr_opt_alias
+			using_clause returning_clause
+				{
+					DeleteStmt *n = makeNode(DeleteStmt);
+
+					n->relation = $5;
+					n->usingClause = $6;
+					n->whereClause = NULL;	/* DELETE ALL 不需要WHERE条件 */
+					n->returningList = $7;
+					n->withClause = $1;
+					n->deleteAll = true;	/* DELETE ALL 语句 */
 					$$ = (Node *) n;
 				}
 		;
@@ -12124,6 +12138,7 @@ UpdateStmt: opt_with_clause UPDATE relation_expr_opt_alias
 					n->whereClause = $7;
 					n->returningList = $8;
 					n->withClause = $1;
+					n->deleteAll = false;	/* 普通UPDATE语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 		;
@@ -12545,6 +12560,7 @@ simple_select:
 					n->groupDistinct = ($7)->distinct;
 					n->havingClause = $8;
 					n->windowClause = $9;
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 			| SELECT distinct_clause target_list
@@ -12562,6 +12578,7 @@ simple_select:
 					n->groupDistinct = ($7)->distinct;
 					n->havingClause = $8;
 					n->windowClause = $9;
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 			| values_clause							{ $$ = $1; }
@@ -12582,6 +12599,7 @@ simple_select:
 
 					n->targetList = list_make1(rt);
 					n->fromClause = list_make1($2);
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 			| select_clause UNION set_quantifier select_clause
@@ -13153,6 +13171,7 @@ values_clause:
 					SelectStmt *n = makeNode(SelectStmt);
 
 					n->valuesLists = list_make1($3);
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 			| values_clause ',' '(' expr_list ')'
@@ -16563,6 +16582,7 @@ PLpgSQL_Expr: opt_distinct_clause opt_target_list
 						n->limitOption = $9->limitOption;
 					}
 					n->lockingClause = $10;
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 		;
@@ -18032,6 +18052,7 @@ makeSetOp(SetOperation op, bool all, Node *larg, Node *rarg)
 	n->all = all;
 	n->larg = (SelectStmt *) larg;
 	n->rarg = (SelectStmt *) rarg;
+	n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 	return (Node *) n;
 }
 
@@ -18568,6 +18589,7 @@ makeRecursiveViewSelect(char *relname, List *aliases, Node *query)
 	s->withClause = w;
 	s->targetList = tl;
 	s->fromClause = list_make1(makeRangeVar(NULL, relname, -1));
+	s->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 
 	return (Node *) s;
 }

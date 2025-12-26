@@ -3298,6 +3298,7 @@ _copyUpdateStmt(const UpdateStmt *from)
 	COPY_NODE_FIELD(fromClause);
 	COPY_NODE_FIELD(returningList);
 	COPY_NODE_FIELD(withClause);
+	COPY_SCALAR_FIELD(deleteAll);
 
 	return newnode;
 }
@@ -3337,6 +3338,7 @@ _copySelectStmt(const SelectStmt *from)
 	COPY_SCALAR_FIELD(limitOption);
 	COPY_NODE_FIELD(lockingClause);
 	COPY_NODE_FIELD(withClause);
+	COPY_SCALAR_FIELD(deleteAll);
 	COPY_SCALAR_FIELD(op);
 	COPY_SCALAR_FIELD(all);
 	COPY_NODE_FIELD(larg);

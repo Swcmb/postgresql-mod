@@ -293,6 +293,7 @@ DoCopy(ParseState *pstate, const CopyStmt *stmt,
 			select = makeNode(SelectStmt);
 			select->targetList = targetList;
 			select->fromClause = list_make1(from);
+			select->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 
 			query = makeNode(RawStmt);
 			query->stmt = (Node *) select;

@@ -1,0 +1,258 @@
+diff --git a/.vscode/launch.json b/.vscode/launch.json
+index f4b2778..77ae284 100644
+--- a/.vscode/launch.json
++++ b/.vscode/launch.json
+@@ -5,7 +5,7 @@
+         "name": "retome attach debug",
+         "request": "attach",
+         "type": "cppdbg",
+-        "program": "/db/uxdb/bin/psql",  
++        "program": "./db/uxdb/bin/postgres",  
+         "processId": "${command:pickProcess}",
+         "MIMode": "gdb",
+         "miDebuggerPath": "/usr/bin/gdb"
+diff --git a/src/backend/commands/copy.c b/src/backend/commands/copy.c
+index e7efb81..f4b5788 100644
+--- a/src/backend/commands/copy.c
++++ b/src/backend/commands/copy.c
+@@ -293,6 +293,7 @@ DoCopy(ParseState *pstate, const CopyStmt *stmt,
+ 			select = makeNode(SelectStmt);
+ 			select->targetList = targetList;
+ 			select->fromClause = list_make1(from);
++			select->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
+ 
+ 			query = makeNode(RawStmt);
+ 			query->stmt = (Node *) select;
+diff --git a/src/backend/nodes/copyfuncs.c b/src/backend/nodes/copyfuncs.c
+index b39b770..6aeb425 100644
+--- a/src/backend/nodes/copyfuncs.c
++++ b/src/backend/nodes/copyfuncs.c
+@@ -3298,6 +3298,7 @@ _copyUpdateStmt(const UpdateStmt *from)
+ 	COPY_NODE_FIELD(fromClause);
+ 	COPY_NODE_FIELD(returningList);
+ 	COPY_NODE_FIELD(withClause);
++	COPY_SCALAR_FIELD(deleteAll);
+ 
+ 	return newnode;
+ }
+@@ -3337,6 +3338,7 @@ _copySelectStmt(const SelectStmt *from)
+ 	COPY_SCALAR_FIELD(limitOption);
+ 	COPY_NODE_FIELD(lockingClause);
+ 	COPY_NODE_FIELD(withClause);
++	COPY_SCALAR_FIELD(deleteAll);
+ 	COPY_SCALAR_FIELD(op);
+ 	COPY_SCALAR_FIELD(all);
+ 	COPY_NODE_FIELD(larg);
+diff --git a/src/backend/nodes/equalfuncs.c b/src/backend/nodes/equalfuncs.c
+index e8b6976..9614d02 100644
+--- a/src/backend/nodes/equalfuncs.c
++++ b/src/backend/nodes/equalfuncs.c
+@@ -1064,6 +1064,7 @@ _equalUpdateStmt(const UpdateStmt *a, const UpdateStmt *b)
+ 	COMPARE_NODE_FIELD(fromClause);
+ 	COMPARE_NODE_FIELD(returningList);
+ 	COMPARE_NODE_FIELD(withClause);
++	COMPARE_SCALAR_FIELD(deleteAll);
+ 
+ 	return true;
+ }
+@@ -1099,6 +1100,7 @@ _equalSelectStmt(const SelectStmt *a, const SelectStmt *b)
+ 	COMPARE_SCALAR_FIELD(limitOption);
+ 	COMPARE_NODE_FIELD(lockingClause);
+ 	COMPARE_NODE_FIELD(withClause);
++	COMPARE_SCALAR_FIELD(deleteAll);
+ 	COMPARE_SCALAR_FIELD(op);
+ 	COMPARE_SCALAR_FIELD(all);
+ 	COMPARE_NODE_FIELD(larg);
+diff --git a/src/backend/parser/analyze.c b/src/backend/parser/analyze.c
+index 57f0ac8..bd39521 100644
+--- a/src/backend/parser/analyze.c
++++ b/src/backend/parser/analyze.c
+@@ -549,8 +549,21 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
+ 	nsitem->p_lateral_only = false;
+ 	nsitem->p_lateral_ok = true;
+ 
+-	qual = transformWhereClause(pstate, stmt->whereClause,
+-								EXPR_KIND_WHERE, "WHERE");
++	/*
++	 * 处理 DELETE ALL 语法：
++	 * 当 deleteAll 为 true 时，忽略 WHERE 条件，删除所有行
++	 */
++	if (stmt->deleteAll)
++	{
++		/* DELETE ALL 不需要 WHERE 条件，直接设置为 NULL */
++		qual = NULL;
++	}
++	else
++	{
++		/* 处理普通 DELETE 语句的 WHERE 条件 */
++		qual = transformWhereClause(pstate, stmt->whereClause,
++									EXPR_KIND_WHERE, "WHERE");
++	}
+ 
+ 	qry->returningList = transformReturningList(pstate, stmt->returningList);
+ 
+@@ -1369,8 +1382,21 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
+ 	markTargetListOrigins(pstate, qry->targetList);
+ 
+ 	/* transform WHERE */
+-	qual = transformWhereClause(pstate, stmt->whereClause,
+-								EXPR_KIND_WHERE, "WHERE");
++	/*
++	 * 处理 DELETE ALL 语法：
++	 * 当 deleteAll 为 true 时，忽略 WHERE 条件，删除所有行
++	 */
++	if (stmt->deleteAll)
++	{
++		/* DELETE ALL 不需要 WHERE 条件，直接设置为 NULL */
++		qual = NULL;
++	}
++	else
++	{
++		/* 处理普通 DELETE 语句的 WHERE 条件 */
++		qual = transformWhereClause(pstate, stmt->whereClause,
++									EXPR_KIND_WHERE, "WHERE");
++	}
+ 
+ 	/* initial processing of HAVING clause is much like WHERE clause */
+ 	qry->havingQual = transformWhereClause(pstate, stmt->havingClause,
+@@ -2442,8 +2468,21 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
+ 	nsitem->p_lateral_only = false;
+ 	nsitem->p_lateral_ok = true;
+ 
+-	qual = transformWhereClause(pstate, stmt->whereClause,
+-								EXPR_KIND_WHERE, "WHERE");
++	/*
++	 * 处理 DELETE ALL 语法：
++	 * 当 deleteAll 为 true 时，忽略 WHERE 条件，删除所有行
++	 */
++	if (stmt->deleteAll)
++	{
++		/* DELETE ALL 不需要 WHERE 条件，直接设置为 NULL */
++		qual = NULL;
++	}
++	else
++	{
++		/* 处理普通 DELETE 语句的 WHERE 条件 */
++		qual = transformWhereClause(pstate, stmt->whereClause,
++									EXPR_KIND_WHERE, "WHERE");
++	}
+ 
+ 	qry->returningList = transformReturningList(pstate, stmt->returningList);
+ 
+diff --git a/src/backend/parser/gram.y b/src/backend/parser/gram.y
+index c77060c..4f37c2d 100644
+--- a/src/backend/parser/gram.y
++++ b/src/backend/parser/gram.y
+@@ -12050,6 +12050,20 @@ DeleteStmt: opt_with_clause DELETE_P FROM relation_expr_opt_alias
+ 					n->whereClause = $6;
+ 					n->returningList = $7;
+ 					n->withClause = $1;
++					n->deleteAll = false;	/* 普通DELETE语句，不使用ALL */
++					$$ = (Node *) n;
++				}
++		| opt_with_clause DELETE_P ALL FROM relation_expr_opt_alias
++			using_clause returning_clause
++				{
++					DeleteStmt *n = makeNode(DeleteStmt);
++
++					n->relation = $5;
++					n->usingClause = $6;
++					n->whereClause = NULL;	/* DELETE ALL 不需要WHERE条件 */
++					n->returningList = $7;
++					n->withClause = $1;
++					n->deleteAll = true;	/* DELETE ALL 语句 */
+ 					$$ = (Node *) n;
+ 				}
+ 		;
+@@ -12124,6 +12138,7 @@ UpdateStmt: opt_with_clause UPDATE relation_expr_opt_alias
+ 					n->whereClause = $7;
+ 					n->returningList = $8;
+ 					n->withClause = $1;
++					n->deleteAll = false;	/* 普通UPDATE语句，不使用ALL */
+ 					$$ = (Node *) n;
+ 				}
+ 		;
+@@ -12545,6 +12560,7 @@ simple_select:
+ 					n->groupDistinct = ($7)->distinct;
+ 					n->havingClause = $8;
+ 					n->windowClause = $9;
++					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
+ 					$$ = (Node *) n;
+ 				}
+ 			| SELECT distinct_clause target_list
+@@ -12562,6 +12578,7 @@ simple_select:
+ 					n->groupDistinct = ($7)->distinct;
+ 					n->havingClause = $8;
+ 					n->windowClause = $9;
++					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
+ 					$$ = (Node *) n;
+ 				}
+ 			| values_clause							{ $$ = $1; }
+@@ -12582,6 +12599,7 @@ simple_select:
+ 
+ 					n->targetList = list_make1(rt);
+ 					n->fromClause = list_make1($2);
++					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
+ 					$$ = (Node *) n;
+ 				}
+ 			| select_clause UNION set_quantifier select_clause
+@@ -13153,6 +13171,7 @@ values_clause:
+ 					SelectStmt *n = makeNode(SelectStmt);
+ 
+ 					n->valuesLists = list_make1($3);
++					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
+ 					$$ = (Node *) n;
+ 				}
+ 			| values_clause ',' '(' expr_list ')'
+@@ -16563,6 +16582,7 @@ PLpgSQL_Expr: opt_distinct_clause opt_target_list
+ 						n->limitOption = $9->limitOption;
+ 					}
+ 					n->lockingClause = $10;
++					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
+ 					$$ = (Node *) n;
+ 				}
+ 		;
+@@ -18032,6 +18052,7 @@ makeSetOp(SetOperation op, bool all, Node *larg, Node *rarg)
+ 	n->all = all;
+ 	n->larg = (SelectStmt *) larg;
+ 	n->rarg = (SelectStmt *) rarg;
++	n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
+ 	return (Node *) n;
+ }
+ 
+@@ -18568,6 +18589,7 @@ makeRecursiveViewSelect(char *relname, List *aliases, Node *query)
+ 	s->withClause = w;
+ 	s->targetList = tl;
+ 	s->fromClause = list_make1(makeRangeVar(NULL, relname, -1));
++	s->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
+ 
+ 	return (Node *) s;
+ }
+diff --git a/src/include/nodes/parsenodes.h b/src/include/nodes/parsenodes.h
+index a77b5ba..8d22f61 100644
+--- a/src/include/nodes/parsenodes.h
++++ b/src/include/nodes/parsenodes.h
+@@ -1654,6 +1654,7 @@ typedef struct DeleteStmt
+ 	Node	   *whereClause;	/* qualifications */
+ 	List	   *returningList;	/* list of expressions to return */
+ 	WithClause *withClause;		/* WITH clause */
++	bool		deleteAll;		/* DELETE ALL 语法标志，用于删除所有行 */
+ } DeleteStmt;
+ 
+ /* ----------------------
+@@ -1669,6 +1670,7 @@ typedef struct UpdateStmt
+ 	List	   *fromClause;		/* optional from clause for more tables */
+ 	List	   *returningList;	/* list of expressions to return */
+ 	WithClause *withClause;		/* WITH clause */
++	bool		deleteAll;		/* DELETE ALL 语法标志，用于删除所有行 */
+ } UpdateStmt;
+ 
+ /* ----------------------
+@@ -1744,6 +1746,7 @@ typedef struct SelectStmt
+ 	LimitOption limitOption;	/* limit type */
+ 	List	   *lockingClause;	/* FOR UPDATE (list of LockingClause's) */
+ 	WithClause *withClause;		/* WITH clause */
++	bool		deleteAll;		/* DELETE ALL 语法标志，用于删除所有行 */
+ 
+ 	/*
+ 	 * These fields are used only in upper-level SelectStmts.
