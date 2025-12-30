@@ -66,6 +66,7 @@
 #include "utils/expandeddatum.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
+#include "utils/timestamp.h"
 
 
 /*
@@ -1595,4 +1596,199 @@ size_t
 varsize_any(void *p)
 {
 	return VARSIZE_ANY(p);
+}
+
+/*
+ * heap_form_tuple_with_implicit
+ *		construct a tuple from the given values[] and isnull[] arrays,
+ *		with optional implicit time column support
+ *
+ * This is an extended version of heap_form_tuple that can handle
+ * implicit time columns. When include_implicit is true, the function
+ * will mark the tuple as having an implicit time column.
+ */
+HeapTuple
+heap_form_tuple_with_implicit(TupleDesc tupleDescriptor,
+                              Datum *values,
+                              bool *isnull,
+                              bool include_implicit)
+{
+        HeapTuple       tuple;                  /* return tuple */
+        HeapTupleHeader td;                     /* tuple data */
+        Size            len,
+                                data_len;
+        int                     hoff;
+        bool            hasnull = false;
+        int                     numberOfAttributes = tupleDescriptor->natts;
+        int                     i;
+        Size            implicit_size = 0;
+        TimestampTz     current_time;
+
+        if (!tupleDescriptor)
+                return NULL;
+
+        if (numberOfAttributes > MaxTupleAttributeNumber)
+                ereport(ERROR,
+                                (errcode(ERRCODE_TOO_MANY_COLUMNS),
+                                 errmsg("number of columns (%d) exceeds limit (%d)",
+                                                numberOfAttributes, MaxTupleAttributeNumber)));
+
+        /*
+         * Check for nulls
+         */
+        for (i = 0; i < numberOfAttributes; i++)
+        {
+                if (isnull[i])
+                {
+                        hasnull = true;
+                        break;
+                }
+        }
+
+        /*
+         * Calculate space needed for implicit columns
+         */
+        if (include_implicit)
+        {
+                implicit_size = MAXALIGN(IMPLICIT_TIME_COLUMN_SIZE);
+        }
+
+        /*
+         * Determine total space needed
+         */
+        len = offsetof(HeapTupleHeaderData, t_bits);
+
+        if (hasnull)
+                len += BITMAPLEN(numberOfAttributes);
+
+
+        hoff = len = MAXALIGN(len); /* align user data safely */
+
+        data_len = heap_compute_data_size(tupleDescriptor, values, isnull);
+
+        len += data_len + implicit_size;
+
+        /*
+         * Allocate and zero the space needed.  Note that the tuple body and
+         * HeapTupleData management structure are allocated in one chunk.
+         */
+        tuple = (HeapTuple) palloc0(HEAPTUPLESIZE + len);
+        tuple->t_data = (HeapTupleHeader) ((char *) tuple + HEAPTUPLESIZE);
+
+        /*
+         * Initialize the tuple header
+         */
+        tuple->t_len = len;
+        ItemPointerSetInvalid(&(tuple->t_self));
+        tuple->t_tableOid = InvalidOid;
+
+        HeapTupleHeaderSetDatumLength(tuple->t_data, len);
+        HeapTupleHeaderSetTypeId(tuple->t_data, tupleDescriptor->tdtypeid);
+        HeapTupleHeaderSetTypMod(tuple->t_data, tupleDescriptor->tdtypmod);
+
+        HeapTupleHeaderSetNatts(tuple->t_data, numberOfAttributes);
+        tuple->t_data->t_hoff = hoff;
+
+        if (include_implicit)
+        {
+                HeapTupleHeaderSetImplicitTime(tuple->t_data);
+        }
+
+        /*
+         * Fill in the data portion
+         */
+        heap_fill_tuple(tupleDescriptor,
+                                        values,
+                                        isnull,
+                                        (char *) tuple->t_data + hoff,
+                                        data_len,
+                                        &tuple->t_data->t_infomask,
+                                        (hasnull ? tuple->t_data->t_bits : NULL));
+
+        /*
+         * Add implicit time column if requested
+         */
+        if (include_implicit)
+        {
+                char *implicit_ptr = (char *) tuple->t_data + hoff + data_len;
+                current_time = GetCurrentTimestamp();
+                
+                /* Align the implicit time data */
+                implicit_ptr = (char *) MAXALIGN(implicit_ptr);
+                
+                /* Store the timestamp */
+                *((TimestampTz *) implicit_ptr) = current_time;
+        }
+
+        return tuple;
+}
+
+/*
+ * heap_update_implicit_time
+ *		Update the implicit time column in a tuple with a new timestamp
+ *
+ * This function updates the implicit time column of a tuple to the
+ * specified timestamp. The tuple must have been marked as having
+ * an implicit time column.
+ */
+void
+heap_update_implicit_time(HeapTuple tuple, Timestamp new_time)
+{
+        TimestampTz *time_ptr;
+        char *tuple_data;
+        Size data_len;
+        
+        if (!HeapTupleHasImplicitTime(tuple))
+                return;                                 /* No implicit time column */
+
+        /*
+         * The implicit time column is stored at the end of the tuple data,
+         * after all user-defined columns and properly aligned.
+         */
+        tuple_data = (char *) tuple->t_data + tuple->t_data->t_hoff;
+        
+        /* Calculate the length of user data */
+        data_len = tuple->t_len - tuple->t_data->t_hoff - MAXALIGN(IMPLICIT_TIME_COLUMN_SIZE);
+        
+        /* Find the implicit time column position */
+        time_ptr = (TimestampTz *) MAXALIGN(tuple_data + data_len);
+        
+        /* Update the timestamp */
+        *time_ptr = new_time;
+}
+
+/*
+ * extract_implicit_time
+ *		Extract the timestamp from an implicit time column
+ *
+ * Returns the timestamp value from the implicit time column of the tuple.
+ * The tuple must have been marked as having an implicit time column.
+ */
+Datum
+extract_implicit_time(HeapTuple tuple, AttrNumber time_attnum)
+{
+        TimestampTz *time_ptr;
+        char *tuple_data;
+        Size data_len;
+        TimestampTz result;
+
+        if (!HeapTupleHasImplicitTime(tuple))
+                return (Datum) 0;               /* No implicit time column */
+
+        /*
+         * The implicit time column is stored at the end of the tuple data,
+         * after all user-defined columns and properly aligned.
+         */
+        tuple_data = (char *) tuple->t_data + tuple->t_data->t_hoff;
+        
+        /* Calculate the length of user data */
+        data_len = tuple->t_len - tuple->t_data->t_hoff - MAXALIGN(IMPLICIT_TIME_COLUMN_SIZE);
+        
+        /* Find the implicit time column position */
+        time_ptr = (TimestampTz *) MAXALIGN(tuple_data + data_len);
+        
+        /* Extract the timestamp */
+        result = *time_ptr;
+
+        return TimestampTzGetDatum(result);
 }

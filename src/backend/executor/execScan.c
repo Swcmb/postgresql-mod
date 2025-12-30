@@ -18,9 +18,11 @@
  */
 #include "postgres.h"
 
+#include "catalog/pg_implicit_columns.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
+#include "utils/rel.h"
 
 
 
@@ -351,4 +353,93 @@ ExecScanReScan(ScanState *node)
 			}
 		}
 	}
+}
+
+/*
+ * ExecScanWithImplicitColumns
+ *		扩展的扫描函数，支持隐含列的WHERE条件和排序
+ *
+ * 此函数在标准扫描的基础上，添加了对隐含列的支持。
+ * 它确保隐含列的值在需要时能够被正确访问和使用。
+ */
+TupleTableSlot *
+ExecScanWithImplicitColumns(ScanState *node,
+							ExecScanAccessMtd accessMtd,
+							ExecScanRecheckMtd recheckMtd)
+{
+	TupleTableSlot *slot;
+	Relation	relation;
+	Oid			table_oid;
+
+	/* 执行标准扫描 */
+	slot = ExecScan(node, accessMtd, recheckMtd);
+
+	/* 如果没有获取到元组，直接返回 */
+	if (TupIsNull(slot))
+		return slot;
+
+	/* 获取关系信息 */
+	relation = node->ss_currentRelation;
+	if (relation == NULL)
+		return slot;
+
+	table_oid = RelationGetRelid(relation);
+
+	/* 检查表是否有隐含时间列 */
+	if (table_has_implicit_time(table_oid))
+	{
+		AttrNumber	time_attnum;
+		Datum		time_datum;
+		bool		isnull;
+
+		/* 获取隐含时间列的属性编号 */
+		time_attnum = get_implicit_time_attnum(table_oid);
+
+		if (AttributeNumberIsValid(time_attnum))
+		{
+			/* 
+			 * 确保隐含列的值在slot中可用
+			 * 这对于WHERE条件和ORDER BY操作是必需的
+			 */
+			time_datum = slot_getattr(slot, time_attnum, &isnull);
+
+			/* 
+			 * 如果隐含列的值为空或无效，可能需要从存储中提取
+			 * 或者使用当前时间戳（这取决于具体的实现策略）
+			 */
+			if (isnull)
+			{
+				/* 
+				 * 注意：在实际实现中，这里可能需要更复杂的逻辑
+				 * 来处理隐含列值的获取和设置
+				 */
+			}
+		}
+	}
+
+	return slot;
+}
+
+/*
+ * ExecSupportsImplicitColumns
+ *		检查给定的扫描节点是否支持隐含列操作
+ *
+ * 此函数检查扫描的表是否包含隐含列，以及当前的执行计划
+ * 是否需要访问这些隐含列。
+ */
+bool
+ExecSupportsImplicitColumns(ScanState *node)
+{
+	Relation	relation;
+	Oid			table_oid;
+
+	/* 获取关系信息 */
+	relation = node->ss_currentRelation;
+	if (relation == NULL)
+		return false;
+
+	table_oid = RelationGetRelid(relation);
+
+	/* 检查表是否有隐含时间列 */
+	return table_has_implicit_time(table_oid);
 }

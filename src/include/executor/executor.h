@@ -467,6 +467,10 @@ typedef bool (*ExecScanRecheckMtd) (ScanState *node, TupleTableSlot *slot);
 
 extern TupleTableSlot *ExecScan(ScanState *node, ExecScanAccessMtd accessMtd,
 								ExecScanRecheckMtd recheckMtd);
+extern TupleTableSlot *ExecScanWithImplicitColumns(ScanState *node,
+												   ExecScanAccessMtd accessMtd,
+												   ExecScanRecheckMtd recheckMtd);
+extern bool ExecSupportsImplicitColumns(ScanState *node);
 extern void ExecAssignScanProjectionInfo(ScanState *node);
 extern void ExecAssignScanProjectionInfoWithVarno(ScanState *node, int varno);
 extern void ExecScanReScan(ScanState *node);

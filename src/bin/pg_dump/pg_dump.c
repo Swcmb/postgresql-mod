@@ -8354,6 +8354,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 	int			i_attfdwoptions;
 	int			i_attmissingval;
 	int			i_atthasdef;
+	int			i_attisimplicit;
 
 	/*
 	 * We want to perform just one query against pg_attribute, and then just
@@ -8426,7 +8427,8 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 						 "' ' || pg_catalog.quote_literal(option_value) "
 						 "FROM pg_catalog.pg_options_to_table(attfdwoptions) "
 						 "ORDER BY option_name"
-						 "), E',\n    ') AS attfdwoptions,\n");
+						 "), E',\n    ') AS attfdwoptions,\n"
+						 "CASE WHEN ic.ic_relid IS NOT NULL THEN true ELSE false END AS attisimplicit,\n");
 
 	if (fout->remoteVersion >= 140000)
 		appendPQExpBufferStr(q,
@@ -8463,6 +8465,8 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 					  "JOIN pg_catalog.pg_attribute a ON (src.tbloid = a.attrelid) "
 					  "LEFT JOIN pg_catalog.pg_type t "
 					  "ON (a.atttypid = t.oid)\n"
+					  "LEFT JOIN pg_catalog.pg_implicit_columns ic "
+					  "ON (src.tbloid = ic.ic_relid AND a.attname = ic.ic_attname)\n"
 					  "WHERE a.attnum > 0::pg_catalog.int2\n"
 					  "ORDER BY a.attrelid, a.attnum",
 					  tbloids->data);
@@ -8492,6 +8496,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 	i_attfdwoptions = PQfnumber(res, "attfdwoptions");
 	i_attmissingval = PQfnumber(res, "attmissingval");
 	i_atthasdef = PQfnumber(res, "atthasdef");
+	i_attisimplicit = PQfnumber(res, "attisimplicit");
 
 	/* Within the next loop, we'll accumulate OIDs of tables with defaults */
 	resetPQExpBuffer(tbloids);
@@ -8553,6 +8558,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 		tbinfo->attmissingval = (char **) pg_malloc(numatts * sizeof(char *));
 		tbinfo->notnull = (bool *) pg_malloc(numatts * sizeof(bool));
 		tbinfo->inhNotNull = (bool *) pg_malloc(numatts * sizeof(bool));
+		tbinfo->attisimplicit = (bool *) pg_malloc(numatts * sizeof(bool));
 		tbinfo->attrdefs = (AttrDefInfo **) pg_malloc(numatts * sizeof(AttrDefInfo *));
 		hasdefaults = false;
 
@@ -8580,6 +8586,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 			tbinfo->attcompression[j] = *(PQgetvalue(res, r, i_attcompression));
 			tbinfo->attfdwoptions[j] = pg_strdup(PQgetvalue(res, r, i_attfdwoptions));
 			tbinfo->attmissingval[j] = pg_strdup(PQgetvalue(res, r, i_attmissingval));
+			tbinfo->attisimplicit[j] = (PQgetvalue(res, r, i_attisimplicit)[0] == 't');
 			tbinfo->attrdefs[j] = NULL; /* fix below */
 			if (PQgetvalue(res, r, i_atthasdef)[0] == 't')
 				hasdefaults = true;
@@ -8894,6 +8901,9 @@ shouldPrintColumn(const DumpOptions *dopt, const TableInfo *tbinfo, int colno)
 	if (dopt->binary_upgrade)
 		return true;
 	if (tbinfo->attisdropped[colno])
+		return false;
+	/* 隐含列不应该在CREATE TABLE语句中显示 */
+	if (tbinfo->attisimplicit[colno])
 		return false;
 	return (tbinfo->attislocal[colno] || tbinfo->ispartition);
 }
@@ -16100,6 +16110,21 @@ dumpTableSchema(Archive *fout, const TableInfo *tbinfo)
 	if (tbinfo->forcerowsec)
 		appendPQExpBuffer(q, "\nALTER TABLE ONLY %s FORCE ROW LEVEL SECURITY;\n",
 						  qualrelname);
+
+	/* 
+	 * 添加隐含列支持
+	 * 检查表是否有隐含时间列，如果有则添加相应的DDL语句
+	 */
+	for (j = 0; j < tbinfo->numatts; j++)
+	{
+		if (tbinfo->attisimplicit[j])
+		{
+			/* 为有隐含列的表添加WITH TIME选项 */
+			appendPQExpBuffer(q, "\n-- 添加隐含时间列支持\n");
+			appendPQExpBuffer(q, "ALTER TABLE %s ADD IMPLICIT TIME;\n", qualrelname);
+			break; /* 只需要添加一次 */
+		}
+	}
 
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(q, &tbinfo->dobj,

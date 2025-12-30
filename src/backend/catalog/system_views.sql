@@ -1307,3 +1307,19 @@ CREATE VIEW pg_stat_subscription_stats AS
         ss.stats_reset
     FROM pg_subscription as s,
          pg_stat_get_subscription_stats(s.oid) as ss;
+
+-- 隐含列信息视图
+CREATE VIEW pg_implicit_columns_view AS
+    SELECT
+        ic.ic_relid,
+        c.relname,
+        ic.ic_attname,
+        ic.ic_attnum,
+        t.typname,
+        ic.ic_visible
+    FROM pg_implicit_columns ic
+        JOIN pg_class c ON ic.ic_relid = c.oid
+        JOIN pg_type t ON ic.ic_atttypid = t.oid;
+
+REVOKE ALL ON pg_implicit_columns_view FROM public;
+GRANT SELECT ON pg_implicit_columns_view TO public;

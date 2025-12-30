@@ -475,3 +475,29 @@ extern void vwrite_stderr(const char *fmt, va_list ap) pg_attribute_printf(1, 0)
 extern void write_stderr_signal_safe(const char *fmt);
 
 #endif							/* ELOG_H */
+/*
+ * 隐含时间列相关的日志记录函数声明
+ */
+extern void implicit_time_log_operation(int log_level, const char *operation, 
+                                       const char *table_name, const char *details);
+extern void implicit_time_log_ddl(const char *ddl_type, const char *table_name, 
+                                 bool with_time, const char *result);
+extern void implicit_time_log_storage(const char *storage_op, const char *table_name,
+                                     size_t row_count, const char *status);
+extern void implicit_time_log_query(const char *query_type, const char *table_name,
+                                   bool include_implicit, const char *performance_info);
+extern void implicit_time_log_error_context(const char *function_name, 
+                                           const char *error_type,
+                                           const char *context_info,
+                                           const char *system_state);
+extern void implicit_time_log_performance(const char *operation, const char *table_name,
+                                         double execution_time_ms, size_t memory_used_kb);
+extern void implicit_time_log_compatibility(const char *feature_name, 
+                                           const char *table_name,
+                                           bool is_compatible,
+                                           const char *compatibility_notes);
+extern void implicit_time_log_transaction(const char *transaction_op, 
+                                         const char *table_name,
+                                         int affected_rows,
+                                         const char *timestamp_info);
+extern void implicit_time_log_system_info(const char *info_type, const char *info_content);

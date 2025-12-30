@@ -2009,6 +2009,8 @@ typedef enum AlterTableType
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
 	AT_DropIdentity,			/* DROP IDENTITY */
+	AT_AddImplicitTime,			/* ADD IMPLICIT TIME */
+	AT_DropImplicitTime,		/* DROP IMPLICIT TIME */
 	AT_ReAddStatistics			/* internal to commands/tablecmds.c */
 } AlterTableType;
 
@@ -2257,6 +2259,7 @@ typedef struct CreateStmt
 	char	   *tablespacename; /* table space to use, or NULL */
 	char	   *accessMethod;	/* table access method */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
+	bool		has_implicit_time;	/* whether table has implicit time column */
 } CreateStmt;
 
 /* ----------

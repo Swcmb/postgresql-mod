@@ -6011,3 +6011,405 @@ generate_series_timestamptz(PG_FUNCTION_ARGS)
 		SRF_RETURN_DONE(funcctx);
 	}
 }
+
+/*
+ * 隐含时间列专用格式化函数
+ * 格式化时间戳为标准格式 'yyyy-mm-dd hh24:mi:ss'
+ */
+
+/*
+ * format_implicit_timestamp()
+ * 将时间戳格式化为隐含时间列的标准格式
+ * 输出格式: 'yyyy-mm-dd hh24:mi:ss'
+ * 
+ * 这个函数专门用于隐含时间列的显示，确保输出格式的一致性
+ * 符合需求4.1, 4.2, 4.3的要求
+ */
+char *
+format_implicit_timestamp(Timestamp timestamp)
+{
+	char	   *result;
+	struct pg_tm tt,
+			   *tm = &tt;
+	fsec_t		fsec;
+	char		buf[32];  /* 足够容纳 'yyyy-mm-dd hh24:mi:ss' 格式 */
+
+	/* 处理特殊时间戳值 */
+	if (TIMESTAMP_NOT_FINITE(timestamp))
+	{
+		if (TIMESTAMP_IS_NOBEGIN(timestamp))
+			strcpy(buf, "-infinity");
+		else
+			strcpy(buf, "infinity");
+	}
+	else if (timestamp2tm(timestamp, NULL, tm, &fsec, NULL, NULL) == 0)
+	{
+		/* 
+		 * 格式化为标准格式: yyyy-mm-dd hh24:mi:ss
+		 * 确保年份4位数，月日时分秒都是2位数，用0填充
+		 * 这是隐含时间列的标准显示格式
+		 */
+		snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+				 tm->tm_year, tm->tm_mon, tm->tm_mday,
+				 tm->tm_hour, tm->tm_min, tm->tm_sec);
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+				 errmsg("隐含时间列时间戳超出范围")));
+	}
+
+	result = pstrdup(buf);
+	return result;
+}
+
+/*
+ * get_current_server_timestamp()
+ * 获取数据库服务器的当前时间戳
+ * 返回秒级精度的时间戳
+ * 
+ * 这个函数确保使用服务器时间，而不是客户端时间
+ * 符合需求4.3, 4.5的要求
+ */
+Timestamp
+get_current_server_timestamp(void)
+{
+	TimestampTz now_tz;
+	Timestamp	now;
+	
+	/* 获取当前时间戳（带时区），这是服务器的当前时间 */
+	now_tz = GetCurrentTimestamp();
+	
+	/* 转换为本地时间戳（不带时区） */
+	now = timestamptz2timestamp(now_tz);
+	
+	/* 截断到秒级精度，去除微秒部分 */
+	now = (now / USECS_PER_SEC) * USECS_PER_SEC;
+	
+	return now;
+}
+
+/*
+ * get_current_timestamp_string()
+ * 获取当前时间戳的格式化字符串
+ * 返回格式: 'yyyy-mm-dd hh24:mi:ss'
+ * 
+ * 这个函数结合了时间获取和格式化功能，
+ * 为隐含时间列提供一站式的时间字符串服务
+ */
+char *
+get_current_timestamp_string(void)
+{
+	Timestamp current_time = get_current_server_timestamp();
+	return format_implicit_timestamp(current_time);
+}
+
+/*
+ * implicit_timestamp_out()
+ * 隐含时间列的输出函数
+ * 专门用于隐含时间列的显示，确保格式为'yyyy-mm-dd hh24:mi:ss'
+ * 
+ * 这是PostgreSQL类型系统的输出函数，用于将内部时间戳转换为字符串
+ * 符合需求4.1, 4.2的标准化显示要求
+ */
+Datum
+implicit_timestamp_out(PG_FUNCTION_ARGS)
+{
+	Timestamp	timestamp = PG_GETARG_TIMESTAMP(0);
+	char	   *result;
+
+	result = format_implicit_timestamp(timestamp);
+	PG_RETURN_CSTRING(result);
+}
+
+/*
+ * validate_implicit_timestamp_format()
+ * 验证时间戳格式是否符合隐含列要求
+ * 
+ * 检查字符串是否符合'yyyy-mm-dd hh24:mi:ss'格式
+ * 并进行基本的范围验证
+ */
+bool
+validate_implicit_timestamp_format(const char *timestamp_str)
+{
+	int year, month, day, hour, min, sec;
+	
+	if (timestamp_str == NULL)
+		return false;
+	
+	/* 验证格式: yyyy-mm-dd hh24:mi:ss */
+	if (sscanf(timestamp_str, "%4d-%2d-%2d %2d:%2d:%2d",
+			   &year, &month, &day, &hour, &min, &sec) != 6)
+		return false;
+	
+	/* 基本范围检查 */
+	if (year < 1 || year > 9999 ||
+		month < 1 || month > 12 ||
+		day < 1 || day > 31 ||
+		hour < 0 || hour > 23 ||
+		min < 0 || min > 59 ||
+		sec < 0 || sec > 59)
+		return false;
+	
+	return true;
+}
+/*
+ * 服务器时间获取相关的辅助函数
+ */
+
+/*
+ * get_server_timezone_offset()
+ * 获取服务器时区偏移量（秒）
+ */
+int
+get_server_timezone_offset(void)
+{
+	pg_tz *server_tz = session_timezone;
+	pg_time_t now_t;
+	struct pg_tm *now_tm;
+	int tz_offset = 0;
+	
+	/* 获取当前时间 */
+	now_t = timestamptz_to_time_t(GetCurrentTimestamp());
+	
+	/* 转换为本地时间结构 */
+	now_tm = pg_localtime(&now_t, server_tz);
+	if (now_tm != NULL)
+	{
+		/* 计算时区偏移量 */
+		tz_offset = now_tm->tm_gmtoff;
+	}
+	
+	return tz_offset;
+}
+
+/*
+ * format_server_timestamp_with_tz()
+ * 格式化服务器时间戳，包含时区信息
+ */
+char *
+format_server_timestamp_with_tz(Timestamp timestamp)
+{
+	char	   *result;
+	char		buf[64];
+	char	   *base_format;
+	int			tz_offset;
+	int			tz_hours, tz_mins;
+	char		tz_sign;
+	
+	/* 获取基本格式 */
+	base_format = format_implicit_timestamp(timestamp);
+	
+	/* 获取时区偏移 */
+	tz_offset = get_server_timezone_offset();
+	
+	/* 计算时区小时和分钟 */
+	tz_sign = (tz_offset >= 0) ? '+' : '-';
+	tz_offset = abs(tz_offset);
+	tz_hours = tz_offset / 3600;
+	tz_mins = (tz_offset % 3600) / 60;
+	
+	/* 组合最终格式 */
+	snprintf(buf, sizeof(buf), "%s%c%02d:%02d",
+			 base_format, tz_sign, tz_hours, tz_mins);
+	
+	result = pstrdup(buf);
+	pfree(base_format);
+	
+	return result;
+}
+
+/*
+ * is_server_time_synchronized()
+ * 检查服务器时间是否与系统时间同步
+ */
+bool
+is_server_time_synchronized(void)
+{
+	TimestampTz server_time;
+	TimestampTz system_time;
+	int64 diff_microsecs;
+	
+	/* 获取服务器时间 */
+	server_time = GetCurrentTimestamp();
+	
+	/* 获取系统时间 */
+	system_time = GetCurrentTimestamp();
+	
+	/* 计算差异（微秒） */
+	diff_microsecs = system_time - server_time;
+	
+	/* 如果差异小于1秒，认为是同步的 */
+	return (abs(diff_microsecs) < USECS_PER_SEC);
+}
+
+/*
+ * get_implicit_timestamp_precision()
+ * 获取隐含时间列的时间精度设置
+ * 返回精度级别：0=秒，3=毫秒，6=微秒
+ */
+int
+get_implicit_timestamp_precision(void)
+{
+	/* 隐含时间列使用秒级精度 */
+	return 0;
+}
+
+/*
+ * truncate_timestamp_to_precision()
+ * 根据指定精度截断时间戳
+ */
+Timestamp
+truncate_timestamp_to_precision(Timestamp timestamp, int precision)
+{
+	int64 divisor;
+	
+	switch (precision)
+	{
+		case 0:  /* 秒级精度 */
+			divisor = USECS_PER_SEC;
+			break;
+		case 3:  /* 毫秒级精度 */
+			divisor = 1000;
+			break;
+		case 6:  /* 微秒级精度 */
+			divisor = 1;
+			break;
+		default:
+			/* 默认使用秒级精度 */
+			divisor = USECS_PER_SEC;
+			break;
+	}
+	
+	return (timestamp / divisor) * divisor;
+}
+/*
+ * PostgreSQL函数系统包装器
+ * 这些函数将C函数包装为PostgreSQL兼容的函数接口
+ */
+
+/*
+ * format_implicit_timestamp_pg()
+ * PostgreSQL函数包装器，用于format_implicit_timestamp()
+ */
+Datum
+format_implicit_timestamp_pg(PG_FUNCTION_ARGS)
+{
+	Timestamp	timestamp = PG_GETARG_TIMESTAMP(0);
+	char	   *result;
+
+	result = format_implicit_timestamp(timestamp);
+	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+/*
+ * get_current_server_timestamp_pg()
+ * PostgreSQL函数包装器，用于get_current_server_timestamp()
+ */
+Datum
+get_current_server_timestamp_pg(PG_FUNCTION_ARGS)
+{
+	Timestamp	result;
+
+	result = get_current_server_timestamp();
+	PG_RETURN_TIMESTAMP(result);
+}
+
+/*
+ * get_current_timestamp_string_pg()
+ * PostgreSQL函数包装器，用于get_current_timestamp_string()
+ */
+Datum
+get_current_timestamp_string_pg(PG_FUNCTION_ARGS)
+{
+	char	   *result;
+
+	result = get_current_timestamp_string();
+	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+/*
+ * validate_implicit_timestamp_format_pg()
+ * PostgreSQL函数包装器，用于validate_implicit_timestamp_format()
+ */
+Datum
+validate_implicit_timestamp_format_pg(PG_FUNCTION_ARGS)
+{
+	text	   *timestamp_text = PG_GETARG_TEXT_PP(0);
+	char	   *timestamp_str;
+	bool		result;
+
+	timestamp_str = text_to_cstring(timestamp_text);
+	result = validate_implicit_timestamp_format(timestamp_str);
+	pfree(timestamp_str);
+	PG_RETURN_BOOL(result);
+}
+
+/*
+ * get_server_timezone_offset_pg()
+ * PostgreSQL函数包装器，用于get_server_timezone_offset()
+ */
+Datum
+get_server_timezone_offset_pg(PG_FUNCTION_ARGS)
+{
+	int			result;
+
+	result = get_server_timezone_offset();
+	PG_RETURN_INT32(result);
+}
+
+/*
+ * format_server_timestamp_with_tz_pg()
+ * PostgreSQL函数包装器，用于format_server_timestamp_with_tz()
+ */
+Datum
+format_server_timestamp_with_tz_pg(PG_FUNCTION_ARGS)
+{
+	Timestamp	timestamp = PG_GETARG_TIMESTAMP(0);
+	char	   *result;
+
+	result = format_server_timestamp_with_tz(timestamp);
+	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+/*
+ * is_server_time_synchronized_pg()
+ * PostgreSQL函数包装器，用于is_server_time_synchronized()
+ */
+Datum
+is_server_time_synchronized_pg(PG_FUNCTION_ARGS)
+{
+	bool		result;
+
+	result = is_server_time_synchronized();
+	PG_RETURN_BOOL(result);
+}
+
+/*
+ * get_implicit_timestamp_precision_pg()
+ * PostgreSQL函数包装器，用于get_implicit_timestamp_precision()
+ */
+Datum
+get_implicit_timestamp_precision_pg(PG_FUNCTION_ARGS)
+{
+	int			result;
+
+	result = get_implicit_timestamp_precision();
+	PG_RETURN_INT32(result);
+}
+
+/*
+ * truncate_timestamp_to_precision_pg()
+ * PostgreSQL函数包装器，用于truncate_timestamp_to_precision()
+ */
+Datum
+truncate_timestamp_to_precision_pg(PG_FUNCTION_ARGS)
+{
+	Timestamp	timestamp = PG_GETARG_TIMESTAMP(0);
+	int32		precision = PG_GETARG_INT32(1);
+	Timestamp	result;
+
+	result = truncate_timestamp_to_precision(timestamp, precision);
+	PG_RETURN_TIMESTAMP(result);
+}

@@ -34,6 +34,8 @@ OBJS = \
 	pg_db_role_setting.o \
 	pg_depend.o \
 	pg_enum.o \
+	pg_implicit_columns.o \
+	pg_implicit_compat.o \
 	pg_inherits.o \
 	pg_largeobject.o \
 	pg_namespace.o \
@@ -72,7 +74,8 @@ CATALOG_HEADERS := \
 	pg_collation.h pg_parameter_acl.h pg_partitioned_table.h \
 	pg_range.h pg_transform.h \
 	pg_sequence.h pg_publication.h pg_publication_namespace.h \
-	pg_publication_rel.h pg_subscription.h pg_subscription_rel.h
+	pg_publication_rel.h pg_subscription.h pg_subscription_rel.h \
+	pg_implicit_columns.h
 
 GENERATED_HEADERS := $(CATALOG_HEADERS:%.h=%_d.h) schemapg.h system_fk_info.h
 
@@ -82,7 +85,7 @@ POSTGRES_BKI_SRCS := $(addprefix $(top_srcdir)/src/include/catalog/, $(CATALOG_H
 POSTGRES_BKI_DATA = $(addprefix $(top_srcdir)/src/include/catalog/,\
 	pg_aggregate.dat pg_am.dat pg_amop.dat pg_amproc.dat pg_authid.dat \
 	pg_cast.dat pg_class.dat pg_collation.dat pg_conversion.dat \
-	pg_database.dat pg_language.dat \
+	pg_database.dat pg_implicit_columns.dat pg_language.dat \
 	pg_namespace.dat pg_opclass.dat pg_operator.dat pg_opfamily.dat \
 	pg_proc.dat pg_range.dat pg_tablespace.dat \
 	pg_ts_config.dat pg_ts_config_map.dat pg_ts_dict.dat pg_ts_parser.dat \

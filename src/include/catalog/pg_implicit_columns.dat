@@ -1,0 +1,15 @@
+#----------------------------------------------------------------------
+#
+# pg_implicit_columns.dat
+#    Initial contents of the pg_implicit_columns system catalog.
+#
+# Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+# Portions Copyright (c) 1994, Regents of the University of California
+#
+# src/include/catalog/pg_implicit_columns.dat
+#
+#----------------------------------------------------------------------
+
+[
+# 初始为空，系统表将在运行时填充
+]

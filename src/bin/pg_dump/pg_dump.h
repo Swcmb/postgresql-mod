@@ -358,6 +358,7 @@ typedef struct _tableInfo
 	char	  **attmissingval;	/* per attribute missing value */
 	bool	   *notnull;		/* NOT NULL constraints on attributes */
 	bool	   *inhNotNull;		/* true if NOT NULL is inherited */
+	bool	   *attisimplicit;	/* true if attr is implicit column */
 	struct _attrDefInfo **attrdefs; /* DEFAULT expressions */
 	struct _constraintInfo *checkexprs; /* CHECK constraints */
 	bool		needs_override; /* has GENERATED ALWAYS AS IDENTITY */

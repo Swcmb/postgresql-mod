@@ -39,6 +39,8 @@
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_depend.h"
 #include "catalog/pg_foreign_table.h"
+#include "catalog/pg_implicit_columns.h"
+#include "catalog/pg_implicit_compat.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_largeobject.h"
 #include "catalog/pg_namespace.h"
@@ -396,6 +398,8 @@ static void validateForeignKeyConstraint(char *conname,
 										 Relation rel, Relation pkrel,
 										 Oid pkindOid, Oid constraintOid);
 static void CheckAlterTableIsSafe(Relation rel);
+static ObjectAddress ATExecAddImplicitTime(Relation rel, LOCKMODE lockmode);
+static ObjectAddress ATExecDropImplicitTime(Relation rel, LOCKMODE lockmode);
 static void ATController(AlterTableStmt *parsetree,
 						 Relation rel, List *cmds, bool recurse, LOCKMODE lockmode,
 						 AlterTableUtilityContext *context);
@@ -714,6 +718,15 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 				 errmsg("ON COMMIT can only be used on temporary tables")));
 
+	/*
+	 * Validate implicit time column option
+	 */
+	if (stmt->has_implicit_time && relkind != RELKIND_RELATION)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				 errmsg("implicit time columns can only be used on regular tables"),
+				 errhint("Remove WITH TIME option for non-table relations.")));
+
 	if (stmt->partspec != NULL)
 	{
 		if (relkind != RELKIND_RELATION)
@@ -721,6 +734,14 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 
 		relkind = RELKIND_PARTITIONED_TABLE;
 		partitioned = true;
+		
+		/*
+		 * Validate implicit time column with partitioning
+		 */
+		if (stmt->has_implicit_time)
+			ereport(WARNING,
+					(errmsg("implicit time columns on partitioned tables may affect performance"),
+					 errhint("Consider using explicit timestamp columns for partitioning keys.")));
 	}
 	else
 		partitioned = false;
@@ -1010,6 +1031,15 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	 * complaining about deadlock risks.
 	 */
 	rel = relation_open(relationId, AccessExclusiveLock);
+
+	/*
+	 * Add implicit time column if requested
+	 */
+	if (stmt->has_implicit_time)
+	{
+		add_implicit_time_column(rel);
+		CommandCounterIncrement();
+	}
 
 	/*
 	 * Now add any newly specified column default and generation expressions
@@ -4881,6 +4911,22 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 			/* No command-specific prep needed */
 			pass = AT_PASS_MISC;
 			break;
+		case AT_AddImplicitTime:	/* ADD IMPLICIT TIME */
+			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE);
+			/* 检查兼容性 */
+			if (!check_backward_compatibility(RelationGetRelid(rel)))
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("表 \"%s\" 不兼容隐含列功能",
+								RelationGetRelationName(rel))));
+			/* No command-specific prep needed */
+			pass = AT_PASS_MISC;
+			break;
+		case AT_DropImplicitTime:	/* DROP IMPLICIT TIME */
+			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE);
+			/* No command-specific prep needed */
+			pass = AT_PASS_MISC;
+			break;
 		default:				/* oops */
 			elog(ERROR, "unrecognized alter table type: %d",
 				 (int) cmd->subtype);
@@ -5301,6 +5347,12 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab,
 			break;
 		case AT_DetachPartitionFinalize:
 			address = ATExecDetachPartitionFinalize(rel, ((PartitionCmd *) cmd->def)->name);
+			break;
+		case AT_AddImplicitTime:	/* ADD IMPLICIT TIME */
+			address = ATExecAddImplicitTime(rel, lockmode);
+			break;
+		case AT_DropImplicitTime:	/* DROP IMPLICIT TIME */
+			address = ATExecDropImplicitTime(rel, lockmode);
 			break;
 		default:				/* oops */
 			elog(ERROR, "unrecognized alter table type: %d",
@@ -19807,4 +19859,83 @@ GetAttributeCompression(Oid atttypid, char *compression)
 				 errmsg("invalid compression method \"%s\"", compression)));
 
 	return cmethod;
+}
+
+/*
+ * ATExecAddImplicitTime
+ *
+ * 为表添加隐含时间列支持
+ * 验证需求: Requirements 6.4, 6.5
+ */
+static ObjectAddress
+ATExecAddImplicitTime(Relation rel, LOCKMODE lockmode)
+{
+	ObjectAddress address = InvalidObjectAddress;
+	Oid			relid = RelationGetRelid(rel);
+
+	/* 检查表是否已经有隐含时间列 */
+	if (table_has_implicit_time(relid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_OBJECT),
+				 errmsg("表 \"%s\" 已经包含隐含时间列",
+						RelationGetRelationName(rel))));
+	}
+
+	/* 检查兼容性 */
+	if (!check_backward_compatibility(relid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("表 \"%s\" 不兼容隐含列功能",
+						RelationGetRelationName(rel))));
+	}
+
+	/* 添加隐含时间列 */
+	add_implicit_time_column(rel);
+
+	/* 记录操作 */
+	ereport(NOTICE,
+			(errmsg("已为表 \"%s\" 添加隐含时间列支持",
+					RelationGetRelationName(rel))));
+
+	/* 设置返回地址 */
+	ObjectAddressSet(address, RelationRelationId, relid);
+
+	return address;
+}
+
+/*
+ * ATExecDropImplicitTime
+ *
+ * 从表中移除隐含时间列支持
+ * 验证需求: Requirements 6.4, 6.5
+ */
+static ObjectAddress
+ATExecDropImplicitTime(Relation rel, LOCKMODE lockmode)
+{
+	ObjectAddress address = InvalidObjectAddress;
+	Oid			relid = RelationGetRelid(rel);
+
+	/* 检查表是否有隐含时间列 */
+	if (!table_has_implicit_time(relid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("表 \"%s\" 不包含隐含时间列",
+						RelationGetRelationName(rel))));
+	}
+
+	/* 移除隐含时间列 */
+	remove_implicit_time_column(rel);
+
+	/* 记录操作 */
+	ereport(NOTICE,
+			(errmsg("已从表 \"%s\" 移除隐含时间列支持",
+					RelationGetRelationName(rel))));
+
+	/* 设置返回地址 */
+	ObjectAddressSet(address, RelationRelationId, relid);
+
+	return address;
 }

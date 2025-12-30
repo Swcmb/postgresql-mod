@@ -527,4 +527,11 @@ extern void EnterParallelMode(void);
 extern void ExitParallelMode(void);
 extern bool IsInParallelMode(void);
 
+
+/* 事务级时间戳管理函数 */
+extern Timestamp GetTransactionTimestamp(void);
+extern void SetTransactionTimestamp(Timestamp timestamp);
+extern void ResetTransactionTimestamp(void);
+extern bool IsTransactionTimestampSet(void);
+
 #endif							/* XACT_H */
