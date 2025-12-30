@@ -1654,6 +1654,7 @@ typedef struct DeleteStmt
 	Node	   *whereClause;	/* qualifications */
 	List	   *returningList;	/* list of expressions to return */
 	WithClause *withClause;		/* WITH clause */
+	bool		deleteAll;		/* DELETE ALL 语法标志，用于删除所有行 */
 } DeleteStmt;
 
 /* ----------------------
@@ -1669,6 +1670,7 @@ typedef struct UpdateStmt
 	List	   *fromClause;		/* optional from clause for more tables */
 	List	   *returningList;	/* list of expressions to return */
 	WithClause *withClause;		/* WITH clause */
+	bool		deleteAll;		/* DELETE ALL 语法标志，用于删除所有行 */
 } UpdateStmt;
 
 /* ----------------------
@@ -1744,6 +1746,7 @@ typedef struct SelectStmt
 	LimitOption limitOption;	/* limit type */
 	List	   *lockingClause;	/* FOR UPDATE (list of LockingClause's) */
 	WithClause *withClause;		/* WITH clause */
+	bool		deleteAll;		/* DELETE ALL 语法标志，用于删除所有行 */
 
 	/*
 	 * These fields are used only in upper-level SelectStmts.
@@ -2006,6 +2009,8 @@ typedef enum AlterTableType
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
 	AT_DropIdentity,			/* DROP IDENTITY */
+	AT_AddImplicitTime,			/* ADD IMPLICIT TIME */
+	AT_DropImplicitTime,		/* DROP IMPLICIT TIME */
 	AT_ReAddStatistics			/* internal to commands/tablecmds.c */
 } AlterTableType;
 
@@ -2254,6 +2259,7 @@ typedef struct CreateStmt
 	char	   *tablespacename; /* table space to use, or NULL */
 	char	   *accessMethod;	/* table access method */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
+	bool		has_implicit_time;	/* whether table has implicit time column */
 } CreateStmt;
 
 /* ----------

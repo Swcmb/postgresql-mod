@@ -25,6 +25,7 @@
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_implicit_columns.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
@@ -147,6 +148,8 @@ static double get_number_of_groups(PlannerInfo *root,
 								   double path_rows,
 								   grouping_sets_data *gd,
 								   List *target_list);
+static List *filter_implicit_columns_from_targetlist(PlannerInfo *root, List *tlist);
+static bool should_exclude_implicit_column(PlannerInfo *root, TargetEntry *tle);
 static RelOptInfo *create_grouping_paths(PlannerInfo *root,
 										 RelOptInfo *input_rel,
 										 PathTarget *target,
@@ -1508,6 +1511,16 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 		 * because the target width estimates can use per-Var width numbers
 		 * that were obtained within query_planner().
 		 */
+		
+		/*
+		 * 对于SELECT查询，过滤掉不应该在SELECT *中显示的隐含列
+		 */
+		if (parse->commandType == CMD_SELECT)
+		{
+			root->processed_tlist = filter_implicit_columns_from_targetlist(root, 
+																		   root->processed_tlist);
+		}
+		
 		final_target = create_pathtarget(root, root->processed_tlist);
 		final_target_parallel_safe =
 			is_parallel_safe(root, (Node *) final_target->exprs);
@@ -7547,4 +7560,86 @@ group_by_has_partkey(RelOptInfo *input_rel,
 	}
 
 	return true;
+}
+
+/*
+ * filter_implicit_columns_from_targetlist
+ *		从目标列表中过滤掉隐含列（用于SELECT *查询）
+ *
+ * 此函数检查目标列表中的每个条目，如果是隐含列且不应该在SELECT *中显示，
+ * 则将其从结果中排除。
+ */
+static List *
+filter_implicit_columns_from_targetlist(PlannerInfo *root, List *tlist)
+{
+	List	   *filtered_tlist = NIL;
+	ListCell   *lc;
+
+	foreach(lc, tlist)
+	{
+		TargetEntry *tle = (TargetEntry *) lfirst(lc);
+
+		/* 如果不是隐含列或者应该包含隐含列，则保留此条目 */
+		if (!should_exclude_implicit_column(root, tle))
+		{
+			filtered_tlist = lappend(filtered_tlist, tle);
+		}
+	}
+
+	return filtered_tlist;
+}
+
+/*
+ * should_exclude_implicit_column
+ *		判断是否应该从SELECT *查询中排除某个隐含列
+ *
+ * 检查给定的目标条目是否是隐含时间列，如果是且当前查询是SELECT *类型，
+ * 则返回true表示应该排除。
+ */
+static bool
+should_exclude_implicit_column(PlannerInfo *root, TargetEntry *tle)
+{
+	Query	   *parse = root->parse;
+	Var		   *var;
+	RangeTblEntry *rte;
+	Oid			table_oid;
+
+	/* 只处理非resjunk的Var类型条目 */
+	if (tle->resjunk || !IsA(tle->expr, Var))
+		return false;
+
+	var = (Var *) tle->expr;
+
+	/* 获取范围表条目 */
+	if (var->varno <= 0 || var->varno > list_length(parse->rtable))
+		return false;
+
+	rte = rt_fetch(var->varno, parse->rtable);
+
+	/* 只处理基础表 */
+	if (rte->rtekind != RTE_RELATION)
+		return false;
+
+	table_oid = rte->relid;
+
+	/* 检查表是否有隐含时间列 */
+	if (!table_has_implicit_time(table_oid))
+		return false;
+
+	/* 检查当前列是否是隐含时间列 */
+	AttrNumber time_attnum = get_implicit_time_attnum(table_oid);
+	if (var->varattno == time_attnum)
+	{
+		/* 
+		 * 这是隐含时间列。在SELECT *查询中应该被排除，
+		 * 除非用户显式指定了该列。
+		 * 
+		 * 注意：这里我们假设如果用户显式指定了隐含列，
+		 * 解析器会将其标记为非星号扩展的结果。
+		 * 实际的实现可能需要更复杂的逻辑来区分这种情况。
+		 */
+		return true;
+	}
+
+	return false;
 }

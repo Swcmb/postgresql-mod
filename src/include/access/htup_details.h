@@ -19,6 +19,7 @@
 #include "access/tupdesc.h"
 #include "access/tupmacs.h"
 #include "storage/bufpage.h"
+#include "utils/timestamp.h"
 
 /*
  * MaxTupleAttributeNumber limits the number of (user) columns in a tuple.
@@ -274,7 +275,8 @@ struct HeapTupleHeaderData
  * information stored in t_infomask2:
  */
 #define HEAP_NATTS_MASK			0x07FF	/* 11 bits for number of attributes */
-/* bits 0x1800 are available */
+#define HEAP_HAS_IMPLICIT_TIME	0x0800	/* tuple has implicit time column */
+/* bit 0x1000 is available */
 #define HEAP_KEYS_UPDATED		0x2000	/* tuple was updated and key cols
 										 * modified, or tuple deleted */
 #define HEAP_HOT_UPDATED		0x4000	/* tuple was HOT-updated */
@@ -527,6 +529,21 @@ do { \
   (tup)->t_infomask2 &= ~HEAP_TUPLE_HAS_MATCH \
 )
 
+#define HeapTupleHeaderHasImplicitTime(tup) \
+( \
+  ((tup)->t_infomask2 & HEAP_HAS_IMPLICIT_TIME) != 0 \
+)
+
+#define HeapTupleHeaderSetImplicitTime(tup) \
+( \
+  (tup)->t_infomask2 |= HEAP_HAS_IMPLICIT_TIME \
+)
+
+#define HeapTupleHeaderClearImplicitTime(tup) \
+( \
+  (tup)->t_infomask2 &= ~HEAP_HAS_IMPLICIT_TIME \
+)
+
 #define HeapTupleHeaderGetNatts(tup) \
 	((tup)->t_infomask2 & HEAP_NATTS_MASK)
 
@@ -544,6 +561,43 @@ do { \
  *		Computes size of null bitmap given number of data columns.
  */
 #define BITMAPLEN(NATTS)	(((int)(NATTS) + 7) / 8)
+/*
+ * 隐含列存储管理宏和常量
+ */
+
+/* 隐含时间列的存储大小（timestamp类型为8字节） */
+#define IMPLICIT_TIME_COLUMN_SIZE   8
+
+/* 隐含列标记位定义 */
+#define IMPLICIT_COL_TIME_PRESENT   0x0001  /* 时间列存在 */
+#define IMPLICIT_COL_RESERVED1      0x0002  /* 保留位1 */
+#define IMPLICIT_COL_RESERVED2      0x0004  /* 保留位2 */
+
+/* 获取隐含列数据的偏移量 */
+#define HeapTupleGetImplicitOffset(tup, tupdesc) \
+    (MAXALIGN((tup)->t_data->t_hoff + \
+              BITMAPLEN(HeapTupleHeaderGetNatts((tup)->t_data))) + \
+     MAXALIGN((tupdesc)->natts * sizeof(Datum)))
+
+/* 检查元组是否有隐含时间列数据 */
+#define HeapTupleHasImplicitTimeData(tup) \
+    (HeapTupleHeaderHasImplicitTime((tup)->t_data) && \
+     (tup)->t_len > HeapTupleGetImplicitOffset(tup, NULL))
+
+/* 获取隐含时间列数据的指针 */
+#define HeapTupleGetImplicitTimePtr(tup, tupdesc) \
+    ((TimestampTz *)((char *)(tup)->t_data + \
+                     HeapTupleGetImplicitOffset(tup, tupdesc)))
+
+/* 设置隐含时间列数据 */
+#define HeapTupleSetImplicitTime(tup, tupdesc, timestamp) \
+    do { \
+        if (HeapTupleHeaderHasImplicitTime((tup)->t_data)) { \
+            TimestampTz *timeptr = HeapTupleGetImplicitTimePtr(tup, tupdesc); \
+            *timeptr = timestamp; \
+        } \
+    } while(0)
+
 
 /*
  * MaxHeapTupleSize is the maximum allowed size of a heap tuple, including
@@ -690,6 +744,15 @@ struct MinimalTupleData
 #define HeapTupleClearHeapOnly(tuple) \
 		HeapTupleHeaderClearHeapOnly((tuple)->t_data)
 
+#define HeapTupleHasImplicitTime(tuple) \
+		HeapTupleHeaderHasImplicitTime((tuple)->t_data)
+
+#define HeapTupleSetImplicitTime(tuple) \
+		HeapTupleHeaderSetImplicitTime((tuple)->t_data)
+
+#define HeapTupleClearImplicitTime(tuple) \
+		HeapTupleHeaderClearImplicitTime((tuple)->t_data)
+
 /* prototypes for functions in common/heaptuple.c */
 extern Size heap_compute_data_size(TupleDesc tupleDesc,
 								   Datum *values, bool *isnull);
@@ -709,6 +772,11 @@ extern void heap_copytuple_with_tuple(HeapTuple src, HeapTuple dest);
 extern Datum heap_copy_tuple_as_datum(HeapTuple tuple, TupleDesc tupleDesc);
 extern HeapTuple heap_form_tuple(TupleDesc tupleDescriptor,
 								 Datum *values, bool *isnull);
+extern HeapTuple heap_form_tuple_with_implicit(TupleDesc tupleDescriptor,
+											   Datum *values, bool *isnull,
+											   bool include_implicit);
+extern void heap_update_implicit_time(HeapTuple tuple, Timestamp new_time);
+extern Datum extract_implicit_time(HeapTuple tuple, AttrNumber time_attnum);
 extern HeapTuple heap_modify_tuple(HeapTuple tuple,
 								   TupleDesc tupleDesc,
 								   Datum *replValues,

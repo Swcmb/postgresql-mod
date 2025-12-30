@@ -632,6 +632,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <str>		opt_existing_window_name
 %type <boolean> opt_if_not_exists
 %type <boolean> opt_unique_null_treatment
+%type <boolean> OptTimeOption
 %type <ival>	generated_when override_kind
 %type <partspec>	PartitionSpec OptPartitionSpec
 %type <partelem>	part_elem
@@ -3464,7 +3465,7 @@ copy_generic_opt_arg_list_item:
 
 CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 			OptInherit OptPartitionSpec table_access_method_clause OptWith
-			OnCommitOption OptTableSpace
+			OptTimeOption OnCommitOption OptTableSpace
 				{
 					CreateStmt *n = makeNode(CreateStmt);
 
@@ -3477,14 +3478,15 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->constraints = NIL;
 					n->accessMethod = $10;
 					n->options = $11;
-					n->oncommit = $12;
-					n->tablespacename = $13;
+					n->has_implicit_time = $12;
+					n->oncommit = $13;
+					n->tablespacename = $14;
 					n->if_not_exists = false;
 					$$ = (Node *) n;
 				}
 		| CREATE OptTemp TABLE IF_P NOT EXISTS qualified_name '('
 			OptTableElementList ')' OptInherit OptPartitionSpec table_access_method_clause
-			OptWith OnCommitOption OptTableSpace
+			OptWith OptTimeOption OnCommitOption OptTableSpace
 				{
 					CreateStmt *n = makeNode(CreateStmt);
 
@@ -3497,14 +3499,15 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->constraints = NIL;
 					n->accessMethod = $13;
 					n->options = $14;
-					n->oncommit = $15;
-					n->tablespacename = $16;
+					n->has_implicit_time = $15;
+					n->oncommit = $16;
+					n->tablespacename = $17;
 					n->if_not_exists = true;
 					$$ = (Node *) n;
 				}
 		| CREATE OptTemp TABLE qualified_name OF any_name
 			OptTypedTableElementList OptPartitionSpec table_access_method_clause
-			OptWith OnCommitOption OptTableSpace
+			OptWith OptTimeOption OnCommitOption OptTableSpace
 				{
 					CreateStmt *n = makeNode(CreateStmt);
 
@@ -3518,14 +3521,15 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->constraints = NIL;
 					n->accessMethod = $9;
 					n->options = $10;
-					n->oncommit = $11;
-					n->tablespacename = $12;
+					n->has_implicit_time = $11;
+					n->oncommit = $12;
+					n->tablespacename = $13;
 					n->if_not_exists = false;
 					$$ = (Node *) n;
 				}
 		| CREATE OptTemp TABLE IF_P NOT EXISTS qualified_name OF any_name
 			OptTypedTableElementList OptPartitionSpec table_access_method_clause
-			OptWith OnCommitOption OptTableSpace
+			OptWith OptTimeOption OnCommitOption OptTableSpace
 				{
 					CreateStmt *n = makeNode(CreateStmt);
 
@@ -3539,14 +3543,15 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->constraints = NIL;
 					n->accessMethod = $12;
 					n->options = $13;
-					n->oncommit = $14;
-					n->tablespacename = $15;
+					n->has_implicit_time = $14;
+					n->oncommit = $15;
+					n->tablespacename = $16;
 					n->if_not_exists = true;
 					$$ = (Node *) n;
 				}
 		| CREATE OptTemp TABLE qualified_name PARTITION OF qualified_name
 			OptTypedTableElementList PartitionBoundSpec OptPartitionSpec
-			table_access_method_clause OptWith OnCommitOption OptTableSpace
+			table_access_method_clause OptWith OptTimeOption OnCommitOption OptTableSpace
 				{
 					CreateStmt *n = makeNode(CreateStmt);
 
@@ -3560,14 +3565,15 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->constraints = NIL;
 					n->accessMethod = $11;
 					n->options = $12;
-					n->oncommit = $13;
-					n->tablespacename = $14;
+					n->has_implicit_time = $13;
+					n->oncommit = $14;
+					n->tablespacename = $15;
 					n->if_not_exists = false;
 					$$ = (Node *) n;
 				}
 		| CREATE OptTemp TABLE IF_P NOT EXISTS qualified_name PARTITION OF
 			qualified_name OptTypedTableElementList PartitionBoundSpec OptPartitionSpec
-			table_access_method_clause OptWith OnCommitOption OptTableSpace
+			table_access_method_clause OptWith OptTimeOption OnCommitOption OptTableSpace
 				{
 					CreateStmt *n = makeNode(CreateStmt);
 
@@ -3581,8 +3587,9 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->constraints = NIL;
 					n->accessMethod = $14;
 					n->options = $15;
-					n->oncommit = $16;
-					n->tablespacename = $17;
+					n->has_implicit_time = $16;
+					n->oncommit = $17;
+					n->tablespacename = $18;
 					n->if_not_exists = true;
 					$$ = (Node *) n;
 				}
@@ -3777,7 +3784,7 @@ ColConstraint:
  * WITH NULL and NULL are not SQL-standard syntax elements,
  * so leave them out. Use DEFAULT NULL to explicitly indicate
  * that a column may have that value. WITH NULL leads to
- * shift/reduce conflicts with WITH TIME ZONE anyway.
+ * shift/reduce conflicts with IMPLICIT_P TIME ZONE anyway.
  * - thomas 1999-01-08
  *
  * DEFAULT expression must be b_expr not a_expr to prevent shift/reduce
@@ -4387,6 +4394,12 @@ OptWith:
 			WITH reloptions				{ $$ = $2; }
 			| WITHOUT OIDS				{ $$ = NIL; }
 			| /*EMPTY*/					{ $$ = NIL; }
+		;
+
+OptTimeOption:
+			IMPLICIT_P TIME					{ $$ = true; }
+			| NO IMPLICIT_P TIME				{ $$ = false; }
+			| /*EMPTY*/					{ $$ = true; }  /* default to IMPLICIT_P TIME */
 		;
 
 OnCommitOption:  ON COMMIT DROP				{ $$ = ONCOMMIT_DROP; }
@@ -12050,6 +12063,20 @@ DeleteStmt: opt_with_clause DELETE_P FROM relation_expr_opt_alias
 					n->whereClause = $6;
 					n->returningList = $7;
 					n->withClause = $1;
+					n->deleteAll = false;	/* 普通DELETE语句，不使用ALL */
+					$$ = (Node *) n;
+				}
+		| opt_with_clause DELETE_P ALL FROM relation_expr_opt_alias
+			using_clause returning_clause
+				{
+					DeleteStmt *n = makeNode(DeleteStmt);
+
+					n->relation = $5;
+					n->usingClause = $6;
+					n->whereClause = NULL;	/* DELETE ALL 不需要WHERE条件 */
+					n->returningList = $7;
+					n->withClause = $1;
+					n->deleteAll = true;	/* DELETE ALL 语句 */
 					$$ = (Node *) n;
 				}
 		;
@@ -12124,6 +12151,7 @@ UpdateStmt: opt_with_clause UPDATE relation_expr_opt_alias
 					n->whereClause = $7;
 					n->returningList = $8;
 					n->withClause = $1;
+					n->deleteAll = false;	/* 普通UPDATE语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 		;
@@ -12545,6 +12573,7 @@ simple_select:
 					n->groupDistinct = ($7)->distinct;
 					n->havingClause = $8;
 					n->windowClause = $9;
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 			| SELECT distinct_clause target_list
@@ -12562,6 +12591,7 @@ simple_select:
 					n->groupDistinct = ($7)->distinct;
 					n->havingClause = $8;
 					n->windowClause = $9;
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 			| values_clause							{ $$ = $1; }
@@ -12582,6 +12612,7 @@ simple_select:
 
 					n->targetList = list_make1(rt);
 					n->fromClause = list_make1($2);
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 			| select_clause UNION set_quantifier select_clause
@@ -13153,6 +13184,7 @@ values_clause:
 					SelectStmt *n = makeNode(SelectStmt);
 
 					n->valuesLists = list_make1($3);
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 			| values_clause ',' '(' expr_list ')'
@@ -16563,6 +16595,7 @@ PLpgSQL_Expr: opt_distinct_clause opt_target_list
 						n->limitOption = $9->limitOption;
 					}
 					n->lockingClause = $10;
+					n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 					$$ = (Node *) n;
 				}
 		;
@@ -18032,6 +18065,7 @@ makeSetOp(SetOperation op, bool all, Node *larg, Node *rarg)
 	n->all = all;
 	n->larg = (SelectStmt *) larg;
 	n->rarg = (SelectStmt *) rarg;
+	n->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 	return (Node *) n;
 }
 
@@ -18568,6 +18602,7 @@ makeRecursiveViewSelect(char *relname, List *aliases, Node *query)
 	s->withClause = w;
 	s->targetList = tl;
 	s->fromClause = list_make1(makeRangeVar(NULL, relname, -1));
+	s->deleteAll = false;	/* 普通SELECT语句，不使用ALL */
 
 	return (Node *) s;
 }

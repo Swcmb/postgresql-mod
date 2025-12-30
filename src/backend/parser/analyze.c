@@ -549,8 +549,21 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 	nsitem->p_lateral_only = false;
 	nsitem->p_lateral_ok = true;
 
-	qual = transformWhereClause(pstate, stmt->whereClause,
-								EXPR_KIND_WHERE, "WHERE");
+	/*
+	 * 处理 DELETE ALL 语法：
+	 * 当 deleteAll 为 true 时，忽略 WHERE 条件，删除所有行
+	 */
+	if (stmt->deleteAll)
+	{
+		/* DELETE ALL 不需要 WHERE 条件，直接设置为 NULL */
+		qual = NULL;
+	}
+	else
+	{
+		/* 处理普通 DELETE 语句的 WHERE 条件 */
+		qual = transformWhereClause(pstate, stmt->whereClause,
+									EXPR_KIND_WHERE, "WHERE");
+	}
 
 	qry->returningList = transformReturningList(pstate, stmt->returningList);
 
@@ -1369,8 +1382,21 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 	markTargetListOrigins(pstate, qry->targetList);
 
 	/* transform WHERE */
-	qual = transformWhereClause(pstate, stmt->whereClause,
-								EXPR_KIND_WHERE, "WHERE");
+	/*
+	 * 处理 DELETE ALL 语法：
+	 * 当 deleteAll 为 true 时，忽略 WHERE 条件，删除所有行
+	 */
+	if (stmt->deleteAll)
+	{
+		/* DELETE ALL 不需要 WHERE 条件，直接设置为 NULL */
+		qual = NULL;
+	}
+	else
+	{
+		/* 处理普通 DELETE 语句的 WHERE 条件 */
+		qual = transformWhereClause(pstate, stmt->whereClause,
+									EXPR_KIND_WHERE, "WHERE");
+	}
 
 	/* initial processing of HAVING clause is much like WHERE clause */
 	qry->havingQual = transformWhereClause(pstate, stmt->havingClause,
@@ -2442,8 +2468,21 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	nsitem->p_lateral_only = false;
 	nsitem->p_lateral_ok = true;
 
-	qual = transformWhereClause(pstate, stmt->whereClause,
-								EXPR_KIND_WHERE, "WHERE");
+	/*
+	 * 处理 DELETE ALL 语法：
+	 * 当 deleteAll 为 true 时，忽略 WHERE 条件，删除所有行
+	 */
+	if (stmt->deleteAll)
+	{
+		/* DELETE ALL 不需要 WHERE 条件，直接设置为 NULL */
+		qual = NULL;
+	}
+	else
+	{
+		/* 处理普通 DELETE 语句的 WHERE 条件 */
+		qual = transformWhereClause(pstate, stmt->whereClause,
+									EXPR_KIND_WHERE, "WHERE");
+	}
 
 	qry->returningList = transformReturningList(pstate, stmt->returningList);
 

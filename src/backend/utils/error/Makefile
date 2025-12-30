@@ -16,6 +16,7 @@ OBJS = \
 	assert.o \
 	csvlog.o \
 	elog.o \
-	jsonlog.o
+	jsonlog.o \
+	implicit_time_error.o
 
 include $(top_srcdir)/src/backend/common.mk

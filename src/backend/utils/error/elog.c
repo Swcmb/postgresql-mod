@@ -3486,3 +3486,156 @@ trace_recovery(int trace_level)
 
 	return trace_level;
 }
+
+/*
+ * 隐含时间列相关的日志记录功能
+ * 
+ * 以下函数提供了隐含时间列功能的专门日志记录接口，
+ * 确保操作失败时记录足够的诊断信息。
+ */
+
+/*
+ * implicit_time_log_operation
+ *    记录隐含时间列操作的详细日志
+ */
+void
+implicit_time_log_operation(int log_level, const char *operation, 
+                           const char *table_name, const char *details)
+{
+    elog(log_level, 
+         "隐含时间列操作: %s, 表: %s, 详情: %s",
+         operation ? operation : "未知操作",
+         table_name ? table_name : "未知表",
+         details ? details : "无详情");
+}
+
+/*
+ * implicit_time_log_ddl
+ *    记录DDL操作相关的日志
+ */
+void
+implicit_time_log_ddl(const char *ddl_type, const char *table_name, 
+                     bool with_time, const char *result)
+{
+    elog(LOG,
+         "隐含时间列DDL: %s 表 %s %s时间列, 结果: %s",
+         ddl_type ? ddl_type : "未知DDL",
+         table_name ? table_name : "未知表",
+         with_time ? "包含" : "不包含",
+         result ? result : "未知");
+}
+
+/*
+ * implicit_time_log_storage
+ *    记录存储操作相关的日志
+ */
+void
+implicit_time_log_storage(const char *storage_op, const char *table_name,
+                         size_t row_count, const char *status)
+{
+    elog(DEBUG1,
+         "隐含时间列存储: %s, 表: %s, 行数: %zu, 状态: %s",
+         storage_op ? storage_op : "未知存储操作",
+         table_name ? table_name : "未知表",
+         row_count,
+         status ? status : "未知状态");
+}
+
+/*
+ * implicit_time_log_query
+ *    记录查询操作相关的日志
+ */
+void
+implicit_time_log_query(const char *query_type, const char *table_name,
+                       bool include_implicit, const char *performance_info)
+{
+    elog(DEBUG2,
+         "隐含时间列查询: %s, 表: %s, 包含隐含列: %s, 性能: %s",
+         query_type ? query_type : "未知查询",
+         table_name ? table_name : "未知表",
+         include_implicit ? "是" : "否",
+         performance_info ? performance_info : "无性能信息");
+}
+
+/*
+ * implicit_time_log_error_context
+ *    记录错误上下文信息，用于问题诊断
+ */
+void
+implicit_time_log_error_context(const char *function_name, 
+                               const char *error_type,
+                               const char *context_info,
+                               const char *system_state)
+{
+    elog(LOG,
+         "隐含时间列错误上下文 - 函数: %s, 错误类型: %s, 上下文: %s, 系统状态: %s",
+         function_name ? function_name : "未知函数",
+         error_type ? error_type : "未知错误",
+         context_info ? context_info : "无上下文",
+         system_state ? system_state : "未知状态");
+}
+
+/*
+ * implicit_time_log_performance
+ *    记录性能相关的日志信息
+ */
+void
+implicit_time_log_performance(const char *operation, const char *table_name,
+                             double execution_time_ms, size_t memory_used_kb)
+{
+    elog(DEBUG1,
+         "隐含时间列性能: %s, 表: %s, 执行时间: %.2fms, 内存使用: %zuKB",
+         operation ? operation : "未知操作",
+         table_name ? table_name : "未知表",
+         execution_time_ms,
+         memory_used_kb);
+}
+
+/*
+ * implicit_time_log_compatibility
+ *    记录兼容性检查相关的日志
+ */
+void
+implicit_time_log_compatibility(const char *feature_name, 
+                               const char *table_name,
+                               bool is_compatible,
+                               const char *compatibility_notes)
+{
+    elog(is_compatible ? DEBUG1 : WARNING,
+         "隐含时间列兼容性检查: 功能 %s, 表 %s, 兼容: %s, 说明: %s",
+         feature_name ? feature_name : "未知功能",
+         table_name ? table_name : "未知表",
+         is_compatible ? "是" : "否",
+         compatibility_notes ? compatibility_notes : "无说明");
+}
+
+/*
+ * implicit_time_log_transaction
+ *    记录事务相关的隐含时间列操作日志
+ */
+void
+implicit_time_log_transaction(const char *transaction_op, 
+                             const char *table_name,
+                             int affected_rows,
+                             const char *timestamp_info)
+{
+    elog(DEBUG1,
+         "隐含时间列事务: %s, 表: %s, 影响行数: %d, 时间戳: %s",
+         transaction_op ? transaction_op : "未知事务操作",
+         table_name ? table_name : "未知表",
+         affected_rows,
+         timestamp_info ? timestamp_info : "无时间戳信息");
+}
+
+/*
+ * implicit_time_log_system_info
+ *    记录系统级别的隐含时间列信息，用于诊断
+ */
+void
+implicit_time_log_system_info(const char *info_type, const char *info_content)
+{
+    elog(LOG,
+         "隐含时间列系统信息 [%s]: %s",
+         info_type ? info_type : "未知信息类型",
+         info_content ? info_content : "无内容");
+}

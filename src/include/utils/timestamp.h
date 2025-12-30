@@ -114,4 +114,18 @@ extern int	date2isoyearday(int year, int mon, int mday);
 
 extern bool TimestampTimestampTzRequiresRewrite(void);
 
+/* 隐含时间列专用函数 */
+extern char *format_implicit_timestamp(Timestamp timestamp);
+extern Timestamp get_current_server_timestamp(void);
+extern Datum implicit_timestamp_out(PG_FUNCTION_ARGS);
+extern bool validate_implicit_timestamp_format(const char *timestamp_str);
+extern char *get_current_timestamp_string(void);
+
+/* 服务器时间获取相关函数 */
+extern int get_server_timezone_offset(void);
+extern char *format_server_timestamp_with_tz(Timestamp timestamp);
+extern bool is_server_time_synchronized(void);
+extern int get_implicit_timestamp_precision(void);
+extern Timestamp truncate_timestamp_to_precision(Timestamp timestamp, int precision);
+
 #endif							/* TIMESTAMP_H */

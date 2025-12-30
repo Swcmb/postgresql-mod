@@ -37,6 +37,7 @@
 #include "postgres.h"
 
 #include "access/table.h"
+#include "catalog/pg_implicit_columns.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/appendinfo.h"
 #include "optimizer/optimizer.h"
@@ -44,6 +45,7 @@
 #include "optimizer/tlist.h"
 #include "parser/parse_coerce.h"
 #include "parser/parsetree.h"
+#include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 
@@ -445,12 +447,45 @@ expand_insert_targetlist(PlannerInfo *root, List *tlist, Relation rel)
 			}
 			else
 			{
-				/* Normal column, insert a NULL of the column datatype */
-				new_expr = coerce_null_to_domain(att_tup->atttypid,
-												 att_tup->atttypmod,
-												 att_tup->attcollation,
-												 att_tup->attlen,
-												 att_tup->attbyval);
+				/* 检查是否是隐含时间列 */
+				Oid table_oid = RelationGetRelid(rel);
+				bool is_implicit_time_col = false;
+				
+				if (table_has_implicit_time(table_oid))
+				{
+					AttrNumber implicit_time_attnum = get_implicit_time_attnum(table_oid);
+					if (AttributeNumberIsValid(implicit_time_attnum) && 
+						implicit_time_attnum == attrno)
+					{
+						is_implicit_time_col = true;
+					}
+				}
+				
+				if (is_implicit_time_col)
+				{
+					/* 为隐含时间列插入当前时间戳函数调用 */
+					FuncExpr *func_expr;
+					Oid func_oid;
+					
+					/* 查找now()函数的OID */
+					func_oid = DatumGetObjectId(DirectFunctionCall1(regprocin, 
+																   CStringGetDatum("now")));
+					
+					/* 创建now()函数调用表达式 */
+					func_expr = makeFuncExpr(func_oid, TIMESTAMPOID, NIL, 
+											InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+					
+					new_expr = (Node *) func_expr;
+				}
+				else
+				{
+					/* Normal column, insert a NULL of the column datatype */
+					new_expr = coerce_null_to_domain(att_tup->atttypid,
+													 att_tup->atttypmod,
+													 att_tup->attcollation,
+													 att_tup->attlen,
+													 att_tup->attbyval);
+				}
 				/* Must run expression preprocessing on any non-const nodes */
 				if (!IsA(new_expr, Const))
 					new_expr = eval_const_expressions(root, new_expr);

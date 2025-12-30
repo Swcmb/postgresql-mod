@@ -55,6 +55,7 @@
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
+#include "catalog/pg_implicit_columns.h"
 #include "commands/trigger.h"
 #include "executor/execPartition.h"
 #include "executor/executor.h"
@@ -71,6 +72,7 @@
 #include "utils/datum.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+#include "utils/timestamp.h"
 
 
 typedef struct MTTargetRelLookup
@@ -1020,6 +1022,34 @@ ExecInsert(ModifyTableContext *context,
 
 		if (onconflict != ONCONFLICT_NONE && resultRelInfo->ri_NumIndices > 0)
 		{
+			/* 在冲突处理之前为隐含时间列设置当前时间戳 */
+			Oid table_oid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+			
+			if (table_oid != InvalidOid && table_has_implicit_time(table_oid))
+			{
+				AttrNumber time_attnum = get_implicit_time_attnum(table_oid);
+				if (time_attnum != InvalidAttrNumber)
+				{
+					Timestamp current_time = get_current_timestamp();
+					TupleDesc tupdesc = slot->tts_tupleDescriptor;
+					
+					/* 确保slot是可修改的 */
+					slot_getallattrs(slot);
+					
+					/* 设置隐含时间列的值 */
+					if (time_attnum <= tupdesc->natts)
+					{
+						slot->tts_values[time_attnum - 1] = TimestampGetDatum(current_time);
+						slot->tts_isnull[time_attnum - 1] = false;
+						
+						/* 标记slot已修改 */
+						ExecStoreVirtualTuple(slot);
+						
+						elog(DEBUG1, "ExecInsert: 冲突处理前设置隐含时间列为当前时间戳");
+					}
+				}
+			}
+
 			/* Perform a speculative insertion. */
 			uint32		specToken;
 			ItemPointerData conflictTid;
@@ -1138,6 +1168,34 @@ ExecInsert(ModifyTableContext *context,
 		}
 		else
 		{
+			/* 在普通插入之前为隐含时间列设置当前时间戳 */
+			Oid table_oid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+			
+			if (table_oid != InvalidOid && table_has_implicit_time(table_oid))
+			{
+				AttrNumber time_attnum = get_implicit_time_attnum(table_oid);
+				if (time_attnum != InvalidAttrNumber)
+				{
+					Timestamp current_time = get_current_timestamp();
+					TupleDesc tupdesc = slot->tts_tupleDescriptor;
+					
+					/* 确保slot是可修改的 */
+					slot_getallattrs(slot);
+					
+					/* 设置隐含时间列的值 */
+					if (time_attnum <= tupdesc->natts)
+					{
+						slot->tts_values[time_attnum - 1] = TimestampGetDatum(current_time);
+						slot->tts_isnull[time_attnum - 1] = false;
+						
+						/* 标记slot已修改 */
+						ExecStoreVirtualTuple(slot);
+						
+						elog(DEBUG1, "ExecInsert: 普通插入前设置隐含时间列为当前时间戳");
+					}
+				}
+			}
+
 			/* insert the tuple normally */
 			table_tuple_insert(resultRelationDesc, slot,
 							   estate->es_output_cid,
@@ -1321,6 +1379,14 @@ ExecDeletePrologue(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
 {
 	if (result)
 		*result = TM_Ok;
+
+	/* 检查表是否包含隐含时间列，用于调试和验证 */
+	Oid table_oid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	if (table_oid != InvalidOid && table_has_implicit_time(table_oid))
+	{
+		elog(DEBUG1, "ExecDeletePrologue: 删除包含隐含时间列的表 %s 中的行", 
+			 RelationGetRelationName(resultRelInfo->ri_RelationDesc));
+	}
 
 	/* BEFORE ROW DELETE triggers */
 	if (resultRelInfo->ri_TrigDesc &&
@@ -1954,6 +2020,33 @@ ExecUpdatePrepareSlot(ResultRelInfo *resultRelInfo,
 	 * column, so (re-)initialize tts_tableOid before evaluating them.
 	 */
 	slot->tts_tableOid = RelationGetRelid(resultRelationDesc);
+
+	/* 为隐含时间列设置当前时间戳 */
+	Oid table_oid = RelationGetRelid(resultRelationDesc);
+	if (table_oid != InvalidOid && table_has_implicit_time(table_oid))
+	{
+		AttrNumber time_attnum = get_implicit_time_attnum(table_oid);
+		if (time_attnum != InvalidAttrNumber)
+		{
+			Timestamp current_time = get_current_timestamp();
+			TupleDesc tupdesc = slot->tts_tupleDescriptor;
+			
+			/* 确保slot是可修改的 */
+			slot_getallattrs(slot);
+			
+			/* 设置隐含时间列的值 */
+			if (time_attnum <= tupdesc->natts)
+			{
+				slot->tts_values[time_attnum - 1] = TimestampGetDatum(current_time);
+				slot->tts_isnull[time_attnum - 1] = false;
+				
+				/* 标记slot已修改 */
+				ExecStoreVirtualTuple(slot);
+				
+				elog(DEBUG1, "ExecUpdatePrepareSlot: 设置隐含时间列为当前时间戳");
+			}
+		}
+	}
 
 	/*
 	 * Compute stored generated columns
